@@ -32,7 +32,13 @@ enum class TorrentSource(val displayName: String) {
     TORRENT_GALAXY("TorrentGalaxy"),
     LIME_TORRENTS("LimeTorrents"),
     SOLID_TORRENTS("SolidTorrents"),
-    BITSEARCH("Bitsearch");
+    BITSEARCH("Bitsearch"),
+    KNABEN("Knaben"),
+    BTDIGG("BTDigg"),
+    TORRENTZ2("Torrentz2"),
+    GLOTORRENTS("GloTorrents"),
+    MAGNETDL("MagnetDL"),
+    TORRENT_PROJECT("TorrentProject");
 }
 
 @Serializable

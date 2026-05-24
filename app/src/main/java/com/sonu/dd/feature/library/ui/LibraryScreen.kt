@@ -1,5 +1,10 @@
 package com.sonu.dd.feature.library.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -17,22 +22,25 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.sonu.dd.core.data.db.LibraryItemEntity
 import com.sonu.dd.core.domain.model.FileCategory
 import com.sonu.dd.core.ui.theme.DDThemeColors
 import com.sonu.dd.core.util.FileUtils
+import java.io.File
 
 @Composable
 fun LibraryScreen(
     viewModel: LibraryViewModel = hiltViewModel(),
-    onItemClick: (LibraryItemEntity) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val colors = DDThemeColors.current
+    val context = LocalContext.current
     val items by viewModel.filteredItems.collectAsState()
     val totalSize by viewModel.totalSize.collectAsState()
     val selectedTab by viewModel.selectedTab.collectAsState()
@@ -72,28 +80,75 @@ fun LibraryScreen(
         }
 
         if (items.isEmpty()) {
-            // Empty state
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("📂", style = MaterialTheme.typography.displayLarge)
-                    Spacer(Modifier.height(16.dp)); Text("Your library is empty", style = MaterialTheme.typography.titleMedium, color = colors.textSecondary)
-                    Spacer(Modifier.height(8.dp)); Text("Downloaded files will appear here", style = MaterialTheme.typography.bodySmall, color = colors.textTertiary)
-                    Spacer(Modifier.height(24.dp)); Text("Made with ❤️ by Sonu Verma", style = MaterialTheme.typography.labelSmall, color = colors.textTertiary)
+                    Spacer(Modifier.height(16.dp))
+                    Text("Your library is empty", style = MaterialTheme.typography.titleMedium, color = colors.textSecondary)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Downloaded files will appear here", style = MaterialTheme.typography.bodySmall, color = colors.textTertiary)
                 }
             }
         } else if (viewMode == 0) {
-            // Grid view
             LazyVerticalGrid(columns = GridCells.Fixed(2), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(items, key = { it.id }) { item -> LibraryGridItem(item) { onItemClick(item) } }
+                items(items, key = { it.id }) { item ->
+                    LibraryGridItem(item) { openFile(context, item) }
+                }
                 item { Spacer(Modifier.height(100.dp)) }
             }
         } else {
-            // List view
             LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(items, key = { it.id }) { item -> LibraryListItem(item) { onItemClick(item) } }
+                items(items, key = { it.id }) { item ->
+                    LibraryListItem(item) { openFile(context, item) }
+                }
                 item { Spacer(Modifier.height(100.dp)) }
             }
         }
+    }
+}
+
+/**
+ * Open a downloaded file using the appropriate system app.
+ * Uses FileProvider for Android 7+ compatibility.
+ */
+private fun openFile(context: Context, item: LibraryItemEntity) {
+    try {
+        val file = File(item.filePath)
+        if (!file.exists()) {
+            Toast.makeText(context, "File not found: ${item.name}", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val uri = FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            file
+        )
+
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, item.mimeType.ifEmpty { "application/octet-stream" })
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+        try {
+            context.startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            // Fallback: try without specific MIME type
+            val fallbackIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "*/*")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                context.startActivity(Intent.createChooser(fallbackIntent, "Open ${item.name}"))
+            } catch (e2: Exception) {
+                Toast.makeText(context, "No app available to open this file", Toast.LENGTH_SHORT).show()
+            }
+        }
+    } catch (e: Exception) {
+        Log.e("LibraryScreen", "Failed to open file: ${e.message}")
+        Toast.makeText(context, "Error opening file: ${e.message}", Toast.LENGTH_SHORT).show()
     }
 }
 
@@ -126,6 +181,6 @@ private fun LibraryListItem(item: LibraryItemEntity, onClick: () -> Unit) {
             Text(item.name, style = MaterialTheme.typography.titleSmall, color = colors.materialScheme.onSurface, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text("${FileUtils.formatSize(item.size)} · ${FileUtils.formatDate(item.downloadedAt)}", style = MaterialTheme.typography.labelSmall, color = colors.textTertiary)
         }
-        Box(Modifier.clip(RoundedCornerShape(6.dp)).background(colors.accent.copy(alpha = 0.12f)).padding(horizontal = 8.dp, vertical = 4.dp)) { Text(item.format, style = MaterialTheme.typography.labelSmall, color = colors.accent, fontWeight = FontWeight.Bold) }
+        Icon(Icons.Default.OpenInNew, "Open", tint = colors.accent, modifier = Modifier.size(20.dp))
     }
 }

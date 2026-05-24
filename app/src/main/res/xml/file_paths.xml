@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Downloads/DD folder -->
+    <external-path name="dd_downloads" path="Download/DD/" />
+    <external-path name="downloads" path="Download/" />
+    <!-- External storage root for any file -->
+    <external-path name="external_storage" path="." />
+    <!-- Cache -->
+    <cache-path name="cache" path="." />
+</paths>

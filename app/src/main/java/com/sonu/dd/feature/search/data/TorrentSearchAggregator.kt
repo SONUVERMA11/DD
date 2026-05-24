@@ -18,13 +18,14 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Unified torrent search aggregator.
+ * Unified torrent search aggregator — 16 sources.
  * Queries all enabled sources in parallel on IO dispatcher,
  * merges and deduplicates results.
  * Caches results in Room for 30-minute offline support.
  */
 @Singleton
 class TorrentSearchAggregator @Inject constructor(
+    // Original 10
     private val ytsDataSource: YtsDataSource,
     private val tpbDataSource: TpbDataSource,
     private val x1337DataSource: X1337DataSource,
@@ -35,27 +36,29 @@ class TorrentSearchAggregator @Inject constructor(
     private val limeTorrentsDataSource: LimeTorrentsDataSource,
     private val solidTorrentsDataSource: SolidTorrentsDataSource,
     private val bitsearchDataSource: BitsearchDataSource,
+    // New 6
+    private val knabenDataSource: KnabenDataSource,
+    private val btDiggDataSource: BTDiggDataSource,
+    private val torrentz2DataSource: Torrentz2DataSource,
+    private val gloTorrentsDataSource: GloTorrentsDataSource,
+    private val magnetDLDataSource: MagnetDLDataSource,
+    private val torrentProjectDataSource: TorrentProjectDataSource,
+    // DAOs & prefs
     private val searchCacheDao: SearchCacheDao,
     private val searchHistoryDao: SearchHistoryDao,
     private val preferences: DDPreferences,
 ) {
     companion object {
         private const val TAG = "TorrentAggregator"
-        private const val CACHE_DURATION_MS = 30 * 60 * 1000L // 30 minutes
+        private const val CACHE_DURATION_MS = 30 * 60 * 1000L
     }
 
-    /**
-     * Search all enabled sources in parallel.
-     * Returns cached results if available and fresh, otherwise fetches new.
-     */
     suspend fun search(query: String, category: String = ""): List<TorrentResult> {
-        // Save to search history (unless incognito)
         val isIncognito = preferences.incognitoDownloadsFlow.first()
         if (!isIncognito) {
             searchHistoryDao.insertSearch(SearchHistoryEntity(query = query))
         }
 
-        // Check cache first
         val minTime = System.currentTimeMillis() - CACHE_DURATION_MS
         val cached = searchCacheDao.getCachedResults(query, minTime)
         if (cached.isNotEmpty()) {
@@ -63,20 +66,13 @@ class TorrentSearchAggregator @Inject constructor(
             return cached.map { it.toDomainModel() }
         }
 
-        // Clear expired cache entries
         searchCacheDao.clearExpired(minTime)
 
-        // Fetch from all sources in parallel — on IO dispatcher
-        val results = withContext(Dispatchers.IO) {
-            fetchFromSources(query)
-        }
-
+        val results = withContext(Dispatchers.IO) { fetchFromSources(query) }
         Log.d(TAG, "Fetched ${results.size} results for '$query'")
 
-        // Cache results
         if (results.isNotEmpty()) {
-            val cacheEntities = results.map { it.toCacheEntity(query) }
-            searchCacheDao.insertAll(cacheEntities)
+            searchCacheDao.insertAll(results.map { it.toCacheEntity(query) })
         }
 
         return results
@@ -86,83 +82,42 @@ class TorrentSearchAggregator @Inject constructor(
         val enabledSources = getEnabledSources()
         Log.d(TAG, "Searching ${enabledSources.size} sources: ${enabledSources.joinToString()}")
 
-        val deferreds = buildList {
-            if (TorrentSource.YTS in enabledSources) {
-                add(async(Dispatchers.IO) {
-                    runCatching { ytsDataSource.search(query) }
-                        .onFailure { Log.w(TAG, "YTS failed: ${it.message}") }
+        // Map each source to its data source search function
+        data class SourceJob(val source: TorrentSource, val search: suspend () -> List<TorrentResult>)
+
+        val jobs = listOf(
+            SourceJob(TorrentSource.YTS) { ytsDataSource.search(query) },
+            SourceJob(TorrentSource.TPB) { tpbDataSource.search(query) },
+            SourceJob(TorrentSource.X1337) { x1337DataSource.search(query) },
+            SourceJob(TorrentSource.EZTV) { eztvDataSource.search(query) },
+            SourceJob(TorrentSource.NYAA) { nyaaDataSource.search(query) },
+            SourceJob(TorrentSource.ACADEMIC) { academicDataSource.search(query) },
+            SourceJob(TorrentSource.TORRENT_GALAXY) { torrentGalaxyDataSource.search(query) },
+            SourceJob(TorrentSource.LIME_TORRENTS) { limeTorrentsDataSource.search(query) },
+            SourceJob(TorrentSource.SOLID_TORRENTS) { solidTorrentsDataSource.search(query) },
+            SourceJob(TorrentSource.BITSEARCH) { bitsearchDataSource.search(query) },
+            SourceJob(TorrentSource.KNABEN) { knabenDataSource.search(query) },
+            SourceJob(TorrentSource.BTDIGG) { btDiggDataSource.search(query) },
+            SourceJob(TorrentSource.TORRENTZ2) { torrentz2DataSource.search(query) },
+            SourceJob(TorrentSource.GLOTORRENTS) { gloTorrentsDataSource.search(query) },
+            SourceJob(TorrentSource.MAGNETDL) { magnetDLDataSource.search(query) },
+            SourceJob(TorrentSource.TORRENT_PROJECT) { torrentProjectDataSource.search(query) },
+        )
+
+        val deferreds = jobs
+            .filter { it.source in enabledSources }
+            .map { job ->
+                async(Dispatchers.IO) {
+                    runCatching { job.search() }
+                        .onSuccess { Log.d(TAG, "${job.source.displayName}: ${it.size} results") }
+                        .onFailure { Log.w(TAG, "${job.source.displayName} failed: ${it.message}") }
                         .getOrDefault(emptyList())
-                })
+                }
             }
-            if (TorrentSource.TPB in enabledSources) {
-                add(async(Dispatchers.IO) {
-                    runCatching { tpbDataSource.search(query) }
-                        .onFailure { Log.w(TAG, "TPB failed: ${it.message}") }
-                        .getOrDefault(emptyList())
-                })
-            }
-            if (TorrentSource.X1337 in enabledSources) {
-                add(async(Dispatchers.IO) {
-                    runCatching { x1337DataSource.search(query) }
-                        .onFailure { Log.w(TAG, "1337x failed: ${it.message}") }
-                        .getOrDefault(emptyList())
-                })
-            }
-            if (TorrentSource.EZTV in enabledSources) {
-                add(async(Dispatchers.IO) {
-                    runCatching { eztvDataSource.search(query) }
-                        .onFailure { Log.w(TAG, "EZTV failed: ${it.message}") }
-                        .getOrDefault(emptyList())
-                })
-            }
-            if (TorrentSource.NYAA in enabledSources) {
-                add(async(Dispatchers.IO) {
-                    runCatching { nyaaDataSource.search(query) }
-                        .onFailure { Log.w(TAG, "Nyaa failed: ${it.message}") }
-                        .getOrDefault(emptyList())
-                })
-            }
-            if (TorrentSource.ACADEMIC in enabledSources) {
-                add(async(Dispatchers.IO) {
-                    runCatching { academicDataSource.search(query) }
-                        .onFailure { Log.w(TAG, "Academic failed: ${it.message}") }
-                        .getOrDefault(emptyList())
-                })
-            }
-            if (TorrentSource.TORRENT_GALAXY in enabledSources) {
-                add(async(Dispatchers.IO) {
-                    runCatching { torrentGalaxyDataSource.search(query) }
-                        .onFailure { Log.w(TAG, "TorrentGalaxy failed: ${it.message}") }
-                        .getOrDefault(emptyList())
-                })
-            }
-            if (TorrentSource.LIME_TORRENTS in enabledSources) {
-                add(async(Dispatchers.IO) {
-                    runCatching { limeTorrentsDataSource.search(query) }
-                        .onFailure { Log.w(TAG, "LimeTorrents failed: ${it.message}") }
-                        .getOrDefault(emptyList())
-                })
-            }
-            if (TorrentSource.SOLID_TORRENTS in enabledSources) {
-                add(async(Dispatchers.IO) {
-                    runCatching { solidTorrentsDataSource.search(query) }
-                        .onFailure { Log.w(TAG, "SolidTorrents failed: ${it.message}") }
-                        .getOrDefault(emptyList())
-                })
-            }
-            if (TorrentSource.BITSEARCH in enabledSources) {
-                add(async(Dispatchers.IO) {
-                    runCatching { bitsearchDataSource.search(query) }
-                        .onFailure { Log.w(TAG, "Bitsearch failed: ${it.message}") }
-                        .getOrDefault(emptyList())
-                })
-            }
-        }
 
         val allResults = deferreds.flatMap { it.await() }
         Log.d(TAG, "Raw results before dedup: ${allResults.size}")
 
-        // Deduplicate by infoHash, sort by seeds descending
         allResults
             .distinctBy { it.infoHash }
             .sortedByDescending { it.seeds }
@@ -180,6 +135,13 @@ class TorrentSearchAggregator @Inject constructor(
         if (preferences.sourceLimeTorrentsFlow.first()) sources.add(TorrentSource.LIME_TORRENTS)
         if (preferences.sourceSolidTorrentsFlow.first()) sources.add(TorrentSource.SOLID_TORRENTS)
         if (preferences.sourceBitsearchFlow.first()) sources.add(TorrentSource.BITSEARCH)
+        // New sources — enabled by default (no preference toggle yet)
+        sources.add(TorrentSource.KNABEN)
+        sources.add(TorrentSource.BTDIGG)
+        sources.add(TorrentSource.TORRENTZ2)
+        sources.add(TorrentSource.GLOTORRENTS)
+        sources.add(TorrentSource.MAGNETDL)
+        sources.add(TorrentSource.TORRENT_PROJECT)
         return sources
     }
 }
