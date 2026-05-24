@@ -169,12 +169,12 @@ class BitsearchDataSource @Inject constructor(
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Utility functions
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-private fun extractInfoHashFromMagnet(magnetUri: String): String {
+internal fun extractInfoHashFromMagnet(magnetUri: String): String {
     val regex = Regex("btih:([a-fA-F0-9]{40})", RegexOption.IGNORE_CASE)
     return regex.find(magnetUri)?.groupValues?.get(1)?.lowercase() ?: magnetUri.hashCode().toString()
 }
 
-private fun parseSizeStr(sizeText: String): Long {
+internal fun parseSizeStr(sizeText: String): Long {
     val cleaned = sizeText.trim().uppercase()
     val numberPart = cleaned.replace(Regex("[^0-9.]"), "").toDoubleOrNull() ?: return 0L
     return when {
