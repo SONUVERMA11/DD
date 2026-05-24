@@ -102,7 +102,7 @@ class DownloadViewModel @Inject constructor(
                 progress = 0f, downloadSpeed = 0, uploadSpeed = 0,
                 seeds = 0, peers = 0, eta = 0,
                 status = DownloadStatus.METADATA,
-                source = TorrentSource.valueOf(source)
+                source = try { TorrentSource.valueOf(source) } catch (_: Exception) { TorrentSource.TPB }
             ))
             downloadDao.updateStatus(id, DownloadStatus.METADATA.name)
             delay(2000)
@@ -139,7 +139,7 @@ class DownloadViewModel @Inject constructor(
                     uploadSpeed = speed / 8,
                     seeds = (5..50).random(), peers = (2..20).random(),
                     eta = eta, status = DownloadStatus.DOWNLOADING,
-                    source = TorrentSource.valueOf(source)
+                source = try { TorrentSource.valueOf(source) } catch (_: Exception) { TorrentSource.TPB }
                 ))
 
                 downloadDao.updateProgress(id, progress, downloaded)
@@ -155,7 +155,7 @@ class DownloadViewModel @Inject constructor(
                 progress = 1f, downloadSpeed = 0, uploadSpeed = 0,
                 seeds = 0, peers = 0, eta = 0,
                 status = DownloadStatus.COMPLETED,
-                source = TorrentSource.valueOf(source)
+                source = try { TorrentSource.valueOf(source) } catch (_: Exception) { TorrentSource.TPB }
             ))
             downloadDao.updateStatus(id, DownloadStatus.COMPLETED.name)
             downloadDao.updateProgress(id, 1f, actualSize)

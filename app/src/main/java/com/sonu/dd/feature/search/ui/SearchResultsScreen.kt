@@ -134,6 +134,46 @@ fun SearchResultsScreen(
                     ShimmerCard()
                 }
             }
+        } else if (uiState.error != null) {
+            // Error state
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        text = "⚠️",
+                        style = MaterialTheme.typography.displayLarge
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text(
+                        text = "Search failed",
+                        style = MaterialTheme.typography.headlineSmall,
+                        color = colors.materialScheme.onBackground
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = uiState.error ?: "Unknown error",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.textSecondary
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(colors.accent)
+                            .clickable { viewModel.search(query, category) }
+                            .padding(horizontal = 24.dp, vertical = 12.dp)
+                    ) {
+                        Text(
+                            text = "Retry",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = colors.onAccent,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
         } else if (uiState.results.isEmpty()) {
             // Empty state
             Box(
@@ -153,10 +193,25 @@ fun SearchResultsScreen(
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
-                        text = "Try different keywords or check your sources",
+                        text = "Try different keywords or check your sources in Settings",
                         style = MaterialTheme.typography.bodyMedium,
                         color = colors.textSecondary
                     )
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(colors.accent.copy(alpha = 0.15f))
+                            .clickable { viewModel.search(query, category) }
+                            .padding(horizontal = 24.dp, vertical = 12.dp)
+                    ) {
+                        Text(
+                            text = "Try Again",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = colors.accent,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         } else {

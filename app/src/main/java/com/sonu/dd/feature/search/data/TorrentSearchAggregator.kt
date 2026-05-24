@@ -1,5 +1,6 @@
 package com.sonu.dd.feature.search.data
 
+import android.util.Log
 import com.sonu.dd.core.data.datastore.DDPreferences
 import com.sonu.dd.core.data.db.SearchCacheDao
 import com.sonu.dd.core.data.db.SearchCacheEntity
@@ -8,15 +9,18 @@ import com.sonu.dd.core.data.db.SearchHistoryEntity
 import com.sonu.dd.core.domain.model.TorrentCategory
 import com.sonu.dd.core.domain.model.TorrentResult
 import com.sonu.dd.core.domain.model.TorrentSource
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * Unified torrent search aggregator.
- * Queries all enabled sources in parallel, merges and deduplicates results.
+ * Queries all enabled sources in parallel on IO dispatcher,
+ * merges and deduplicates results.
  * Caches results in Room for 30-minute offline support.
  */
 @Singleton
@@ -36,6 +40,7 @@ class TorrentSearchAggregator @Inject constructor(
     private val preferences: DDPreferences,
 ) {
     companion object {
+        private const val TAG = "TorrentAggregator"
         private const val CACHE_DURATION_MS = 30 * 60 * 1000L // 30 minutes
     }
 
@@ -54,59 +59,108 @@ class TorrentSearchAggregator @Inject constructor(
         val minTime = System.currentTimeMillis() - CACHE_DURATION_MS
         val cached = searchCacheDao.getCachedResults(query, minTime)
         if (cached.isNotEmpty()) {
+            Log.d(TAG, "Returning ${cached.size} cached results for '$query'")
             return cached.map { it.toDomainModel() }
         }
 
         // Clear expired cache entries
         searchCacheDao.clearExpired(minTime)
 
-        // Fetch from all sources in parallel
-        val results = fetchFromSources(query)
+        // Fetch from all sources in parallel — on IO dispatcher
+        val results = withContext(Dispatchers.IO) {
+            fetchFromSources(query)
+        }
+
+        Log.d(TAG, "Fetched ${results.size} results for '$query'")
 
         // Cache results
-        val cacheEntities = results.map { it.toCacheEntity(query) }
-        searchCacheDao.insertAll(cacheEntities)
+        if (results.isNotEmpty()) {
+            val cacheEntities = results.map { it.toCacheEntity(query) }
+            searchCacheDao.insertAll(cacheEntities)
+        }
 
         return results
     }
 
     private suspend fun fetchFromSources(query: String): List<TorrentResult> = coroutineScope {
         val enabledSources = getEnabledSources()
+        Log.d(TAG, "Searching ${enabledSources.size} sources: ${enabledSources.joinToString()}")
 
         val deferreds = buildList {
             if (TorrentSource.YTS in enabledSources) {
-                add(async { runCatching { ytsDataSource.search(query) }.getOrDefault(emptyList()) })
+                add(async(Dispatchers.IO) {
+                    runCatching { ytsDataSource.search(query) }
+                        .onFailure { Log.w(TAG, "YTS failed: ${it.message}") }
+                        .getOrDefault(emptyList())
+                })
             }
             if (TorrentSource.TPB in enabledSources) {
-                add(async { runCatching { tpbDataSource.search(query) }.getOrDefault(emptyList()) })
+                add(async(Dispatchers.IO) {
+                    runCatching { tpbDataSource.search(query) }
+                        .onFailure { Log.w(TAG, "TPB failed: ${it.message}") }
+                        .getOrDefault(emptyList())
+                })
             }
             if (TorrentSource.X1337 in enabledSources) {
-                add(async { runCatching { x1337DataSource.search(query) }.getOrDefault(emptyList()) })
+                add(async(Dispatchers.IO) {
+                    runCatching { x1337DataSource.search(query) }
+                        .onFailure { Log.w(TAG, "1337x failed: ${it.message}") }
+                        .getOrDefault(emptyList())
+                })
             }
             if (TorrentSource.EZTV in enabledSources) {
-                add(async { runCatching { eztvDataSource.search(query) }.getOrDefault(emptyList()) })
+                add(async(Dispatchers.IO) {
+                    runCatching { eztvDataSource.search(query) }
+                        .onFailure { Log.w(TAG, "EZTV failed: ${it.message}") }
+                        .getOrDefault(emptyList())
+                })
             }
             if (TorrentSource.NYAA in enabledSources) {
-                add(async { runCatching { nyaaDataSource.search(query) }.getOrDefault(emptyList()) })
+                add(async(Dispatchers.IO) {
+                    runCatching { nyaaDataSource.search(query) }
+                        .onFailure { Log.w(TAG, "Nyaa failed: ${it.message}") }
+                        .getOrDefault(emptyList())
+                })
             }
             if (TorrentSource.ACADEMIC in enabledSources) {
-                add(async { runCatching { academicDataSource.search(query) }.getOrDefault(emptyList()) })
+                add(async(Dispatchers.IO) {
+                    runCatching { academicDataSource.search(query) }
+                        .onFailure { Log.w(TAG, "Academic failed: ${it.message}") }
+                        .getOrDefault(emptyList())
+                })
             }
             if (TorrentSource.TORRENT_GALAXY in enabledSources) {
-                add(async { runCatching { torrentGalaxyDataSource.search(query) }.getOrDefault(emptyList()) })
+                add(async(Dispatchers.IO) {
+                    runCatching { torrentGalaxyDataSource.search(query) }
+                        .onFailure { Log.w(TAG, "TorrentGalaxy failed: ${it.message}") }
+                        .getOrDefault(emptyList())
+                })
             }
             if (TorrentSource.LIME_TORRENTS in enabledSources) {
-                add(async { runCatching { limeTorrentsDataSource.search(query) }.getOrDefault(emptyList()) })
+                add(async(Dispatchers.IO) {
+                    runCatching { limeTorrentsDataSource.search(query) }
+                        .onFailure { Log.w(TAG, "LimeTorrents failed: ${it.message}") }
+                        .getOrDefault(emptyList())
+                })
             }
             if (TorrentSource.SOLID_TORRENTS in enabledSources) {
-                add(async { runCatching { solidTorrentsDataSource.search(query) }.getOrDefault(emptyList()) })
+                add(async(Dispatchers.IO) {
+                    runCatching { solidTorrentsDataSource.search(query) }
+                        .onFailure { Log.w(TAG, "SolidTorrents failed: ${it.message}") }
+                        .getOrDefault(emptyList())
+                })
             }
             if (TorrentSource.BITSEARCH in enabledSources) {
-                add(async { runCatching { bitsearchDataSource.search(query) }.getOrDefault(emptyList()) })
+                add(async(Dispatchers.IO) {
+                    runCatching { bitsearchDataSource.search(query) }
+                        .onFailure { Log.w(TAG, "Bitsearch failed: ${it.message}") }
+                        .getOrDefault(emptyList())
+                })
             }
         }
 
         val allResults = deferreds.flatMap { it.await() }
+        Log.d(TAG, "Raw results before dedup: ${allResults.size}")
 
         // Deduplicate by infoHash, sort by seeds descending
         allResults
@@ -142,9 +196,9 @@ private fun SearchCacheEntity.toDomainModel(): TorrentResult = TorrentResult(
     leeches = leeches,
     infoHash = infoHash,
     magnetUri = magnetUri,
-    source = TorrentSource.valueOf(source),
+    source = try { TorrentSource.valueOf(source) } catch (_: Exception) { TorrentSource.TPB },
     quality = quality,
-    category = TorrentCategory.valueOf(category),
+    category = try { TorrentCategory.valueOf(category) } catch (_: Exception) { TorrentCategory.OTHER },
     uploadDate = uploadDate,
     thumbnailUrl = thumbnailUrl,
 )

@@ -1,6 +1,7 @@
 package com.sonu.dd
 
 import android.os.Bundle
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -13,7 +14,9 @@ import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
 import androidx.navigation.compose.*
+import androidx.navigation.navArgument
 import com.sonu.dd.core.ui.components.DDBottomNavBar
 import com.sonu.dd.core.ui.navigation.BottomNavTab
 import com.sonu.dd.core.ui.navigation.DDRoute
@@ -28,6 +31,8 @@ import com.sonu.dd.feature.settings.ui.SettingsScreen
 import com.sonu.dd.feature.settings.ui.SettingsViewModel
 import com.sonu.dd.feature.splash.SplashScreen
 import dagger.hilt.android.AndroidEntryPoint
+import java.net.URLDecoder
+import java.net.URLEncoder
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -55,9 +60,11 @@ fun DDApp() {
     val currentRoute = currentBackStackEntry?.destination?.route ?: ""
 
     val showBottomBar = !showSplash && !currentRoute.contains("SearchResults") &&
-            !currentRoute.contains("DownloadDetail") && !currentRoute.contains("VideoPlayer") &&
-            !currentRoute.contains("AudioPlayer") && !currentRoute.contains("Reader") &&
-            !currentRoute.contains("ImageViewer")
+            !currentRoute.contains("search_results") &&
+            !currentRoute.contains("DownloadDetail") &&
+            !currentRoute.contains("download_detail") &&
+            !currentRoute.contains("VideoPlayer") && !currentRoute.contains("AudioPlayer") &&
+            !currentRoute.contains("Reader") && !currentRoute.contains("ImageViewer")
 
     if (showSplash) {
         SplashScreen { showSplash = false }
@@ -67,23 +74,44 @@ fun DDApp() {
                 composable("search") {
                     SearchScreen(
                         onSearch = { query ->
-                            navController.navigate("search_results/$query")
+                            if (query.isNotBlank()) {
+                                val encoded = URLEncoder.encode(query, "UTF-8")
+                                navController.navigate("search_results/$encoded")
+                            }
                         }
                     )
                 }
-                composable("search_results/{query}") { backStackEntry ->
-                    val query = backStackEntry.arguments?.getString("query") ?: ""
+                composable(
+                    "search_results/{query}",
+                    arguments = listOf(navArgument("query") { type = NavType.StringType })
+                ) { backStackEntry ->
+                    val rawQuery = backStackEntry.arguments?.getString("query") ?: ""
+                    val query = try { URLDecoder.decode(rawQuery, "UTF-8") } catch (e: Exception) { rawQuery }
                     SearchResultsScreen(
                         query = query,
                         onResultClick = { result ->
-                            navController.navigate("download_detail/${java.net.URLEncoder.encode(result.magnetUri, "UTF-8")}/${java.net.URLEncoder.encode(result.name, "UTF-8")}/${result.size}/${result.source.name}")
+                            try {
+                                val encodedMagnet = URLEncoder.encode(result.magnetUri, "UTF-8")
+                                val encodedName = URLEncoder.encode(result.name, "UTF-8")
+                                navController.navigate("download_detail/$encodedMagnet/$encodedName/${result.size}/${result.source.name}")
+                            } catch (e: Exception) {
+                                Log.e("DDApp", "Navigation error: ${e.message}")
+                            }
                         },
                         onBack = { navController.popBackStack() }
                     )
                 }
-                composable("download_detail/{magnetUri}/{name}/{size}/{source}") { entry ->
-                    val magnetUri = java.net.URLDecoder.decode(entry.arguments?.getString("magnetUri") ?: "", "UTF-8")
-                    val name = java.net.URLDecoder.decode(entry.arguments?.getString("name") ?: "", "UTF-8")
+                composable(
+                    "download_detail/{magnetUri}/{name}/{size}/{source}",
+                    arguments = listOf(
+                        navArgument("magnetUri") { type = NavType.StringType },
+                        navArgument("name") { type = NavType.StringType },
+                        navArgument("size") { type = NavType.StringType },
+                        navArgument("source") { type = NavType.StringType },
+                    )
+                ) { entry ->
+                    val magnetUri = try { URLDecoder.decode(entry.arguments?.getString("magnetUri") ?: "", "UTF-8") } catch (e: Exception) { "" }
+                    val name = try { URLDecoder.decode(entry.arguments?.getString("name") ?: "", "UTF-8") } catch (e: Exception) { "" }
                     val size = entry.arguments?.getString("size")?.toLongOrNull() ?: 0L
                     val source = entry.arguments?.getString("source") ?: "TPB"
                     DownloadDetailScreen(

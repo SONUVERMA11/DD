@@ -37,11 +37,71 @@ data class SettingsUiState(
 class SettingsViewModel @Inject constructor(
     private val prefs: DDPreferences,
 ) : ViewModel() {
+
+    // Combine ALL preference flows properly (split into groups to avoid combine limit)
+    private val appearanceFlow = combine(
+        prefs.themeFlow, prefs.followSystemThemeFlow, prefs.animationLevelFlow
+    ) { theme, follow, anim -> Triple(theme, follow, anim) }
+
+    private val downloadsFlow = combine(
+        prefs.autoSaveGalleryFlow, prefs.simultaneousDownloadsFlow,
+        prefs.autoResumeFlow, prefs.smartConvertFlow
+    ) { autoSave, simDl, autoResume, smart -> listOf(autoSave, simDl, autoResume, smart) }
+
+    private val networkFlow = combine(
+        prefs.vpnReminderFlow, prefs.dhtEnabledFlow, prefs.pexEnabledFlow, prefs.anonymousModeFlow
+    ) { vpn, dht, pex, anon -> listOf(vpn, dht, pex, anon) }
+
+    private val securityFlow = combine(
+        prefs.progressNotificationFlow, prefs.appLockEnabledFlow, prefs.incognitoDownloadsFlow
+    ) { progress, lock, incognito -> Triple(progress, lock, incognito) }
+
+    private val sourcesFlow = combine(
+        prefs.sourceYtsFlow, prefs.source1337xFlow, prefs.sourceTpbFlow,
+        prefs.sourceEztvFlow, prefs.sourceNyaaFlow
+    ) { yts, x1337, tpb, eztv, nyaa -> listOf(yts, x1337, tpb, eztv, nyaa) }
+
+    private val sources2Flow = combine(
+        prefs.sourceAcademicFlow, prefs.sourceTorrentGalaxyFlow,
+        prefs.sourceLimeTorrentsFlow, prefs.sourceSolidTorrentsFlow, prefs.sourceBitsearchFlow
+    ) { academic, tg, lime, solid, bitsearch -> listOf(academic, tg, lime, solid, bitsearch) }
+
+    @Suppress("UNCHECKED_CAST")
     val uiState: StateFlow<SettingsUiState> = combine(
-        prefs.themeFlow, prefs.followSystemThemeFlow, prefs.animationLevelFlow,
-        prefs.autoSaveGalleryFlow, prefs.simultaneousDownloadsFlow
-    ) { theme, follow, anim, autoSave, simDl ->
-        SettingsUiState(theme = theme, followSystem = follow, animationLevel = anim, autoSaveGallery = autoSave, simultaneousDownloads = simDl)
+        listOf(appearanceFlow, downloadsFlow, networkFlow, securityFlow, sourcesFlow, sources2Flow)
+    ) { results ->
+        val appearance = results[0] as Triple<DDTheme, Boolean, Int>
+        val downloads = results[1] as List<Any>
+        val network = results[2] as List<Any>
+        val security = results[3] as Triple<Boolean, Boolean, Boolean>
+        val sources = results[4] as List<Any>
+        val sources2 = results[5] as List<Any>
+        SettingsUiState(
+            theme = appearance.first,
+            followSystem = appearance.second,
+            animationLevel = appearance.third,
+            autoSaveGallery = downloads[0] as Boolean,
+            simultaneousDownloads = downloads[1] as Int,
+            autoResume = downloads[2] as Boolean,
+            smartConvert = downloads[3] as Boolean,
+            vpnReminder = network[0] as Boolean,
+            dhtEnabled = network[1] as Boolean,
+            pexEnabled = network[2] as Boolean,
+            anonymousMode = network[3] as Boolean,
+            progressNotification = security.first,
+            appLockEnabled = security.second,
+            incognitoDownloads = security.third,
+            sourceYts = sources[0] as Boolean,
+            source1337x = sources[1] as Boolean,
+            sourceTpb = sources[2] as Boolean,
+            sourceEztv = sources[3] as Boolean,
+            sourceNyaa = sources[4] as Boolean,
+            sourceAcademic = sources2[0] as Boolean,
+            sourceTorrentGalaxy = sources2[1] as Boolean,
+            sourceLimeTorrents = sources2[2] as Boolean,
+            sourceSolidTorrents = sources2[3] as Boolean,
+            sourceBitsearch = sources2[4] as Boolean,
+        )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), SettingsUiState())
 
     fun setTheme(t: DDTheme) = viewModelScope.launch { prefs.setTheme(t) }
