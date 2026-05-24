@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- DD Letters -->
+    <path
+        android:fillColor="#3D7EFF"
+        android:pathData="M30,38 L30,70 L42,70 C52,70 58,63 58,54 C58,45 52,38 42,38 Z M36,44 L41,44 C48,44 52,48 52,54 C52,60 48,64 41,64 L36,64 Z"
+        android:strokeWidth="0"/>
+    <path
+        android:fillColor="#3D7EFF"
+        android:pathData="M62,38 L62,70 L74,70 C84,70 90,63 90,54 C90,45 84,38 74,38 Z M68,44 L73,44 C80,44 84,48 84,54 C84,60 80,64 73,64 L68,64 Z"
+        android:strokeWidth="0"/>
+    <!-- Download arrow -->
+    <path
+        android:fillColor="#3D7EFF"
+        android:pathData="M54,72 L48,66 L51,66 L51,58 L57,58 L57,66 L60,66 Z"
+        android:strokeWidth="0"/>
+</vector>

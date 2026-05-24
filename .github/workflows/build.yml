@@ -1,0 +1,113 @@
+name: Build DD APK
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Debug & Release APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Build Release APK
+        run: ./gradlew assembleRelease --stacktrace
+        env:
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: dd-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          retention-days: 14
+
+      - name: Upload Release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: dd-release-apk
+          path: app/build/outputs/apk/release/*.apk
+          retention-days: 30
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download Release APK
+        uses: actions/download-artifact@v4
+        with:
+          name: dd-release-apk
+          path: ./release-apk
+
+      - name: Download Debug APK
+        uses: actions/download-artifact@v4
+        with:
+          name: dd-debug-apk
+          path: ./debug-apk
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "DD – Deep Downloader ${{ github.ref_name }}"
+          body: |
+            ## DD – Deep Downloader ${{ github.ref_name }}
+
+            Download Smarter, Deeper.
+
+            ### What's in this release
+            - Full torrent search across 10 sources
+            - Blazing fast downloads with custom speedometer
+            - 5 beautiful themes
+            - Format conversion support
+            - Gallery auto-save
+
+            ### Downloads
+            - **Release APK**: Optimized, minified build
+            - **Debug APK**: For testing and development
+
+            ---
+            Made with ❤️ by Sonu Verma
+          files: |
+            ./release-apk/*.apk
+            ./debug-apk/*.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,41 @@
+<resources>
+    <string name="app_name">DD – Deep Downloader</string>
+    <string name="app_tagline">Download Smarter, Deeper.</string>
+    <string name="branding">Made with ❤️ by Sonu Verma</string>
+    <string name="search_hint">Search torrents…</string>
+    <string name="tab_search">Search</string>
+    <string name="tab_downloads">Downloads</string>
+    <string name="tab_library">Library</string>
+    <string name="tab_settings">Settings</string>
+
+    <!-- Categories -->
+    <string name="cat_movies">🎬 Movies</string>
+    <string name="cat_music">🎵 Music</string>
+    <string name="cat_books">📚 Books</string>
+    <string name="cat_software">🖥️ Software</string>
+    <string name="cat_games">🎮 Games</string>
+    <string name="cat_docs">📄 Docs</string>
+
+    <!-- Download States -->
+    <string name="state_downloading">Downloading</string>
+    <string name="state_paused">Paused</string>
+    <string name="state_completed">Completed</string>
+    <string name="state_failed">Failed</string>
+    <string name="state_queued">Queued</string>
+    <string name="state_converting">Converting</string>
+    <string name="state_seeding">Seeding</string>
+
+    <!-- Settings -->
+    <string name="settings_appearance">Appearance</string>
+    <string name="settings_downloads">Downloads</string>
+    <string name="settings_formats">File Formats</string>
+    <string name="settings_network">Network &amp; Privacy</string>
+    <string name="settings_notifications">Notifications</string>
+    <string name="settings_security">Security</string>
+    <string name="settings_storage">Storage</string>
+    <string name="settings_about">About</string>
+
+    <!-- About -->
+    <string name="version">Version 1.0.0</string>
+    <string name="disclaimer">DD is a tool for downloading legal content via BitTorrent protocol. Users are responsible for ensuring they have the right to download the content they access.</string>
+</resources>
