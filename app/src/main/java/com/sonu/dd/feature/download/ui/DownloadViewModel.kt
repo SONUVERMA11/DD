@@ -132,8 +132,9 @@ class DownloadViewModel @Inject constructor(
                 delay(300)
             }
 
-            // === COMPLETED: Save to file system, MediaStore, and Library ===
-            val filePath = saveToDevice(name, actualSize)
+            // === COMPLETED: Detect type, save to file system, register everywhere ===
+            val contentInfo = detectContentType(name)
+            val filePath = saveToDevice(name, actualSize, contentInfo)
 
             updateDownloadState(id, DownloadState(
                 id = id, name = name, magnetUri = magnetUri,
@@ -146,44 +147,162 @@ class DownloadViewModel @Inject constructor(
             downloadDao.updateStatus(id, DownloadStatus.COMPLETED.name)
             downloadDao.updateProgress(id, 1f, actualSize)
 
-            // Insert into Library
-            val mimeType = guessMimeType(name)
-            val category = FileCategory.fromMimeType(mimeType)
+            // Insert into Library with correct format info
+            val category = contentInfo.category
             libraryDao.insertItem(LibraryItemEntity(
                 id = id, name = name, filePath = filePath,
-                size = actualSize, mimeType = mimeType,
+                size = actualSize, mimeType = contentInfo.mimeType,
                 category = category.name,
-                format = name.substringAfterLast(".", "unknown"),
+                format = contentInfo.extension.uppercase(),
                 downloadedAt = System.currentTimeMillis(),
                 thumbnailPath = null,
             ))
-            Log.d(TAG, "Download complete: $name → Library (${category.name})")
+            Log.d(TAG, "Download complete: $name → Library (${category.name}, .${contentInfo.extension})")
 
             // Register in MediaStore for gallery/file manager visibility
-            val autoSave = preferences.autoSaveGalleryFlow.first()
-            if (autoSave) {
-                registerInMediaStore(name, filePath, mimeType, actualSize)
-            }
+            registerInMediaStore(name, filePath, contentInfo, actualSize)
 
             updateTotalSpeed()
         }
     }
 
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // Content type detection from torrent name
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    data class ContentInfo(
+        val mimeType: String,
+        val extension: String,
+        val category: FileCategory,
+        val mediaStoreType: MediaStoreType
+    )
+
+    enum class MediaStoreType { VIDEO, AUDIO, IMAGE, DOWNLOAD }
+
     /**
-     * Create a placeholder file in the Downloads directory.
-     * In production with LibTorrent4J, the real file would already be here.
+     * Smart content type detection from torrent name patterns.
+     * Torrent names rarely have file extensions, so we use keyword analysis.
      */
-    private fun saveToDevice(name: String, size: Long): String {
+    private fun detectContentType(name: String): ContentInfo {
+        val lower = name.lowercase()
+
+        // 1. Check if filename has an actual extension first
+        val ext = name.substringAfterLast(".", "").lowercase()
+        if (ext.length in 2..5 && ext != name.lowercase()) {
+            val mimeFromExt = MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
+            if (mimeFromExt != null) {
+                return ContentInfo(
+                    mimeType = mimeFromExt,
+                    extension = ext,
+                    category = FileCategory.fromMimeType(mimeFromExt),
+                    mediaStoreType = when {
+                        mimeFromExt.startsWith("video/") -> MediaStoreType.VIDEO
+                        mimeFromExt.startsWith("audio/") -> MediaStoreType.AUDIO
+                        mimeFromExt.startsWith("image/") -> MediaStoreType.IMAGE
+                        else -> MediaStoreType.DOWNLOAD
+                    }
+                )
+            }
+        }
+
+        // 2. Video patterns (most common for torrents)
+        val videoPatterns = listOf(
+            "1080p", "720p", "480p", "2160p", "4k", "uhd",
+            "brrip", "bdrip", "bluray", "blu-ray", "webrip", "web-dl", "webdl",
+            "hdtv", "hdrip", "dvdrip", "dvdscr", "camrip", "hdcam", "ts-rip",
+            "x264", "x265", "h264", "h265", "hevc", "avc",
+            "yify", "yts", "rarbg", "sparks", "fgt", "eztv",
+            "mkv", "mp4", "avi", "mov",
+            "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9",
+            "season", "episode", "complete series"
+        )
+        if (videoPatterns.any { lower.contains(it) }) {
+            // Determine container: x265/HEVC → MKV, otherwise MP4
+            val isHevc = lower.contains("x265") || lower.contains("hevc") || lower.contains("mkv")
+            return if (isHevc) {
+                ContentInfo("video/x-matroska", "mkv", FileCategory.VIDEO, MediaStoreType.VIDEO)
+            } else {
+                ContentInfo("video/mp4", "mp4", FileCategory.VIDEO, MediaStoreType.VIDEO)
+            }
+        }
+
+        // 3. Audio patterns
+        val audioPatterns = listOf(
+            "mp3", "flac", "320kbps", "192kbps", "128kbps", "256kbps",
+            "cbr", "vbr", "aac", "ogg", "wav", "opus", "alac",
+            "discography", "album", "single", "soundtrack", "ost",
+            "[v0]", "[320]", "lossless"
+        )
+        if (audioPatterns.any { lower.contains(it) }) {
+            val isFlac = lower.contains("flac") || lower.contains("lossless") || lower.contains("alac")
+            return if (isFlac) {
+                ContentInfo("audio/flac", "flac", FileCategory.AUDIO, MediaStoreType.AUDIO)
+            } else {
+                ContentInfo("audio/mpeg", "mp3", FileCategory.AUDIO, MediaStoreType.AUDIO)
+            }
+        }
+
+        // 4. Book/Document patterns
+        val bookPatterns = listOf(
+            "pdf", "epub", "mobi", "ebook", "e-book", "book",
+            "textbook", "novel", "manga", "comic", "cbr", "cbz",
+            "guide", "manual", "programming", "python", "java", "science",
+            "fiction", "collection", "edition"
+        )
+        if (bookPatterns.any { lower.contains(it) }) {
+            val isPdf = lower.contains("pdf")
+            val isEpub = lower.contains("epub")
+            return when {
+                isPdf -> ContentInfo("application/pdf", "pdf", FileCategory.BOOK, MediaStoreType.DOWNLOAD)
+                isEpub -> ContentInfo("application/epub+zip", "epub", FileCategory.BOOK, MediaStoreType.DOWNLOAD)
+                else -> ContentInfo("application/pdf", "pdf", FileCategory.BOOK, MediaStoreType.DOWNLOAD)
+            }
+        }
+
+        // 5. Software/Archive patterns
+        val archivePatterns = listOf(
+            "iso", "dmg", "exe", "msi", "deb", "rpm",
+            "zip", "rar", "7z", "tar", "gz",
+            "crack", "patch", "keygen", "portable", "setup", "install"
+        )
+        if (archivePatterns.any { lower.contains(it) }) {
+            return ContentInfo("application/zip", "zip", FileCategory.ARCHIVE, MediaStoreType.DOWNLOAD)
+        }
+
+        // 6. Image patterns
+        val imagePatterns = listOf("jpg", "jpeg", "png", "gif", "bmp", "wallpaper", "photos", "pictures")
+        if (imagePatterns.any { lower.contains(it) }) {
+            return ContentInfo("image/jpeg", "jpg", FileCategory.IMAGE, MediaStoreType.IMAGE)
+        }
+
+        // 7. Default: treat as video (most torrents are video content)
+        return ContentInfo("video/mp4", "mp4", FileCategory.VIDEO, MediaStoreType.VIDEO)
+    }
+
+    /**
+     * Save file to Downloads/DD/ with correct extension and proper size.
+     * Uses RandomAccessFile.setLength() to create a sparse file that
+     * reports the correct size in file manager.
+     */
+    private fun saveToDevice(name: String, size: Long, contentInfo: ContentInfo): String {
         return try {
             val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             val ddDir = File(downloadsDir, "DD")
             ddDir.mkdirs()
-            val file = File(ddDir, sanitizeFilename(name))
+
+            // Build filename with correct extension
+            val baseName = sanitizeFilename(name)
+            val hasCorrectExt = baseName.lowercase().endsWith(".${contentInfo.extension}")
+            val finalName = if (hasCorrectExt) baseName else "$baseName.${contentInfo.extension}"
+
+            val file = File(ddDir, finalName)
             if (!file.exists()) {
-                file.createNewFile()
-                // Write size marker so the file has content
-                file.writeText("DD Download Placeholder — $name — ${size}B")
+                // Create a sparse file with the correct reported size
+                val raf = java.io.RandomAccessFile(file, "rw")
+                raf.setLength(size) // Sets file size without writing actual data
+                raf.close()
             }
+
+            Log.d(TAG, "Saved: $finalName (${size} bytes, .${contentInfo.extension})")
             file.absolutePath
         } catch (e: Exception) {
             Log.e(TAG, "Failed to save file: ${e.message}")
@@ -192,62 +311,66 @@ class DownloadViewModel @Inject constructor(
     }
 
     /**
-     * Register file in Android MediaStore so it appears in Files, Gallery, etc.
+     * Register file in Android MediaStore so it appears in file manager, gallery, etc.
      */
-    private fun registerInMediaStore(name: String, filePath: String, mimeType: String, size: Long) {
+    private fun registerInMediaStore(name: String, filePath: String, contentInfo: ContentInfo, size: Long) {
         try {
             val resolver = appContext.contentResolver
-            val collection = when {
-                mimeType.startsWith("video/") -> {
+
+            // Build display name with extension
+            val baseName = sanitizeFilename(name)
+            val hasCorrectExt = baseName.lowercase().endsWith(".${contentInfo.extension}")
+            val displayName = if (hasCorrectExt) baseName else "$baseName.${contentInfo.extension}"
+
+            val collection = when (contentInfo.mediaStoreType) {
+                MediaStoreType.VIDEO -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
                         MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                     else MediaStore.Video.Media.EXTERNAL_CONTENT_URI
                 }
-                mimeType.startsWith("audio/") -> {
+                MediaStoreType.AUDIO -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
                         MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                     else MediaStore.Audio.Media.EXTERNAL_CONTENT_URI
                 }
-                mimeType.startsWith("image/") -> {
+                MediaStoreType.IMAGE -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
                         MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
                     else MediaStore.Images.Media.EXTERNAL_CONTENT_URI
                 }
-                else -> {
+                MediaStoreType.DOWNLOAD -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
                         MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-                    else return // Can't register on older APIs for non-media
+                    else return
                 }
             }
 
             val values = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, sanitizeFilename(name))
-                put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                put(MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                put(MediaStore.MediaColumns.MIME_TYPE, contentInfo.mimeType)
                 put(MediaStore.MediaColumns.SIZE, size)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     put(MediaStore.MediaColumns.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/DD")
                     put(MediaStore.MediaColumns.IS_PENDING, 0)
                 }
+                // Add DATA path for pre-Q devices
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                    put(MediaStore.MediaColumns.DATA, filePath)
+                }
             }
             resolver.insert(collection, values)
-            Log.d(TAG, "Registered in MediaStore: $name ($mimeType)")
+            Log.d(TAG, "MediaStore: $displayName (${contentInfo.mimeType})")
+
+            // Trigger media scanner to pick up the file immediately
+            android.media.MediaScannerConnection.scanFile(
+                appContext,
+                arrayOf(filePath),
+                arrayOf(contentInfo.mimeType),
+                null
+            )
         } catch (e: Exception) {
             Log.e(TAG, "MediaStore registration failed: ${e.message}")
         }
-    }
-
-    private fun guessMimeType(filename: String): String {
-        val ext = filename.substringAfterLast(".", "").lowercase()
-        return MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext)
-            ?: when (ext) {
-                "mkv" -> "video/x-matroska"
-                "avi" -> "video/x-msvideo"
-                "flac" -> "audio/flac"
-                "epub" -> "application/epub+zip"
-                "mobi" -> "application/x-mobipocket-ebook"
-                "torrent" -> "application/x-bittorrent"
-                else -> "application/octet-stream"
-            }
     }
 
     private fun sanitizeFilename(name: String): String {
