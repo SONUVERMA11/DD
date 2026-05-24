@@ -18,14 +18,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+
 import com.sonu.dd.core.ui.theme.DDThemeColors
 import com.sonu.dd.core.util.FileUtils
 
 @Composable
 fun DownloadDetailScreen(
     magnetUri: String, name: String, size: Long, source: String,
-    viewModel: DownloadViewModel = hiltViewModel(),
+    viewModel: DownloadViewModel,
     onBack: () -> Unit, onStartDownload: () -> Unit,
     modifier: Modifier = Modifier
 ) {

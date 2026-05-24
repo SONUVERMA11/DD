@@ -19,7 +19,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.hilt.navigation.compose.hiltViewModel
+
 import com.sonu.dd.core.domain.model.DownloadState
 import com.sonu.dd.core.domain.model.DownloadStatus
 import com.sonu.dd.core.ui.theme.DDThemeColors
@@ -28,7 +28,7 @@ import com.sonu.dd.feature.download.ui.components.SpeedometerWidget
 
 @Composable
 fun ActiveDownloadsScreen(
-    viewModel: DownloadViewModel = hiltViewModel(),
+    viewModel: DownloadViewModel,
     modifier: Modifier = Modifier
 ) {
     val downloadsState by viewModel.downloadsState.collectAsState()
