@@ -103,24 +103,23 @@ class TorrentEngine @Inject constructor(
         val sp = SettingsPack()
 
         // Connections
-        sp.connectionsLimit(200)
-        sp.maxPeerlistSize(1000)
-        sp.activeDownloads(5)
-        sp.activeSeeds(5)
-        sp.activeLimit(10)
+        sp.setInteger(settings_pack.int_types.connections_limit.swigValue(), 200)
+        sp.setInteger(settings_pack.int_types.max_peerlist_size.swigValue(), 1000)
+        sp.setInteger(settings_pack.int_types.active_downloads.swigValue(), 5)
+        sp.setInteger(settings_pack.int_types.active_seeds.swigValue(), 5)
+        sp.setInteger(settings_pack.int_types.active_limit.swigValue(), 10)
 
         // Performance
-        sp.sendBufferWatermark(512 * 1024) // 512KB
-        sp.sendBufferLowWatermark(128 * 1024) // 128KB
+        sp.setInteger(settings_pack.int_types.send_buffer_watermark.swigValue(), 512 * 1024)
 
         // Enable DHT, LSD, UPnP, NAT-PMP
-        sp.enableDht(true)
-        sp.enableLsd(true)
-        sp.enableUpnp(true)
-        sp.enableNatpmp(true)
+        sp.setBoolean(settings_pack.bool_types.enable_dht.swigValue(), true)
+        sp.setBoolean(settings_pack.bool_types.enable_lsd.swigValue(), true)
+        sp.setBoolean(settings_pack.bool_types.enable_upnp.swigValue(), true)
+        sp.setBoolean(settings_pack.bool_types.enable_natpmp.swigValue(), true)
 
         // Anonymous mode
-        sp.anonymousMode(false)
+        sp.setBoolean(settings_pack.bool_types.anonymous_mode.swigValue(), false)
 
         // User agent
         sp.setString(settings_pack.string_types.user_agent.swigValue(), "DD/1.0 libtorrent")
