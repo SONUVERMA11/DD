@@ -193,7 +193,7 @@ class TorrentEngine @Inject constructor(
             for (i in 0..60) { // wait up to 60 seconds for metadata
                 delay(1000)
                 val torrents = session.torrents()
-                handle = torrents.find { th ->
+                handle = torrents.find { th: TorrentHandle ->
                     th.infoHash()?.toHex()?.lowercase() == infoHash?.lowercase()
                 }
                 if (handle != null) {
