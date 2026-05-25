@@ -152,5 +152,5 @@ dependencies {
     implementation(libs.libtorrent4j.android.arm64)
     implementation(libs.libtorrent4j.android.arm)
     implementation(libs.libtorrent4j.android.x86)
-    implementation(libs.libtorrent4j.android.x86.x86.64)
+    implementation(libs.libtorrent4j.android.x86v64)
 }
