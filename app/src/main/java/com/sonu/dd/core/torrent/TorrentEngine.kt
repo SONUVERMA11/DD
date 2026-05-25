@@ -217,7 +217,7 @@ class TorrentEngine @Inject constructor(
                     (totalSize - downloaded) / dlSpeed
                 } else 0L
 
-                val isPaused = status.flags().and_(TorrentFlags.PAUSED).nonZero()
+                val isPaused = status.flags().and_(TorrentFlags.PAUSED).ne(torrent_flags_t())
 
                 val state = when {
                     status.isFinished -> TorrentDownloadState.COMPLETED
