@@ -11,7 +11,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import org.libtorrent4j.*
 import org.libtorrent4j.alerts.*
-import org.libtorrent4j.swig.settings_pack
+import org.libtorrent4j.swig.libtorrent
+import org.libtorrent4j.swig.error_code
+import org.libtorrent4j.swig.torrent_flags_t
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
@@ -32,7 +34,7 @@ data class TorrentDownloadInfo(
     val progress: Float,
     val savePath: String,
     val state: TorrentDownloadState,
-    val eta: Long, // seconds
+    val eta: Long,
     val files: List<String> = emptyList(),
 )
 
@@ -61,10 +63,10 @@ class TorrentEngine @Inject constructor(
     private val _isRunning = MutableStateFlow(false)
     val isRunning = _isRunning.asStateFlow()
 
-    // Track active torrent handles by ID (magnetUri hash or infoHash)
     private val activeTorrents = ConcurrentHashMap<String, TorrentHandle>()
     private val downloadCallbacks = ConcurrentHashMap<String, (TorrentDownloadInfo) -> Unit>()
     private val completionCallbacks = ConcurrentHashMap<String, (String) -> Unit>()
+    private val infoHashMap = ConcurrentHashMap<String, Sha1Hash>() // download ID → info hash
 
     /**
      * Initialize the libtorrent session.
@@ -74,14 +76,10 @@ class TorrentEngine @Inject constructor(
 
         try {
             val sm = SessionManager()
+            sm.start()
 
-            // Configure session settings
-            val params = SessionParams(defaultSettingsPack())
-            sm.start(params)
-
-            // Set up alert listener for torrent events
             sm.addListener(object : AlertListener {
-                override fun types(): IntArray? = null // listen to all alerts
+                override fun types(): IntArray? = null
 
                 override fun alert(alert: Alert<*>) {
                     handleAlert(alert)
@@ -96,40 +94,6 @@ class TorrentEngine @Inject constructor(
         }
     }
 
-    /**
-     * Create default settings for the libtorrent session.
-     */
-    private fun defaultSettingsPack(): SettingsPack {
-        val sp = SettingsPack()
-
-        // Connections
-        sp.setInteger(settings_pack.int_types.connections_limit.swigValue(), 200)
-        sp.setInteger(settings_pack.int_types.max_peerlist_size.swigValue(), 1000)
-        sp.setInteger(settings_pack.int_types.active_downloads.swigValue(), 5)
-        sp.setInteger(settings_pack.int_types.active_seeds.swigValue(), 5)
-        sp.setInteger(settings_pack.int_types.active_limit.swigValue(), 10)
-
-        // Performance
-        sp.setInteger(settings_pack.int_types.send_buffer_watermark.swigValue(), 512 * 1024)
-
-        // Enable DHT, LSD, UPnP, NAT-PMP
-        sp.setBoolean(settings_pack.bool_types.enable_dht.swigValue(), true)
-        sp.setBoolean(settings_pack.bool_types.enable_lsd.swigValue(), true)
-        sp.setBoolean(settings_pack.bool_types.enable_upnp.swigValue(), true)
-        sp.setBoolean(settings_pack.bool_types.enable_natpmp.swigValue(), true)
-
-        // Anonymous mode
-        sp.setBoolean(settings_pack.bool_types.anonymous_mode.swigValue(), false)
-
-        // User agent
-        sp.setString(settings_pack.string_types.user_agent.swigValue(), "DD/1.0 libtorrent")
-
-        return sp
-    }
-
-    /**
-     * Get the save directory for downloads.
-     */
     private fun getDownloadDir(): File {
         val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
         val ddDir = File(downloadsDir, "DD")
@@ -139,10 +103,6 @@ class TorrentEngine @Inject constructor(
 
     /**
      * Add a magnet URI for downloading.
-     * @param id Unique identifier for this download
-     * @param magnetUri The magnet URI to download
-     * @param onProgress Callback for progress updates
-     * @param onComplete Callback when download completes, receives the file path
      */
     suspend fun addDownload(
         id: String,
@@ -150,30 +110,21 @@ class TorrentEngine @Inject constructor(
         onProgress: (TorrentDownloadInfo) -> Unit,
         onComplete: (String) -> Unit,
     ) = withContext(Dispatchers.IO) {
-        val sm = sessionManager
-        if (sm == null) {
-            start()
-        }
+        if (sessionManager == null) start()
 
         val session = sessionManager ?: run {
             Log.e(TAG, "Session not available")
-            onProgress(TorrentDownloadInfo(
-                id = id, name = "Error", totalSize = 0, downloadedSize = 0,
-                downloadSpeed = 0, uploadSpeed = 0, seeds = 0, peers = 0,
-                progress = 0f, savePath = "", state = TorrentDownloadState.ERROR, eta = 0
-            ))
+            onProgress(errorInfo(id, "Engine failed to start"))
             return@withContext
         }
 
         try {
             val saveDir = getDownloadDir()
-            Log.d(TAG, "Adding magnet: ${magnetUri.take(60)}...")
+            Log.d(TAG, "Adding magnet: ${magnetUri.take(80)}...")
 
-            // Register callbacks
             downloadCallbacks[id] = onProgress
             completionCallbacks[id] = onComplete
 
-            // Notify: fetching metadata
             onProgress(TorrentDownloadInfo(
                 id = id, name = "Fetching metadata...", totalSize = 0, downloadedSize = 0,
                 downloadSpeed = 0, uploadSpeed = 0, seeds = 0, peers = 0,
@@ -181,52 +132,53 @@ class TorrentEngine @Inject constructor(
                 state = TorrentDownloadState.FETCHING_METADATA, eta = 0
             ))
 
-            // Download the torrent from magnet
-            session.download(magnetUri, saveDir)
+            // Parse the magnet URI to extract info hash
+            val ec = error_code()
+            val p = libtorrent.parse_magnet_uri(magnetUri, ec)
+            if (ec.value() != 0) {
+                Log.e(TAG, "Invalid magnet URI: ${ec.message()}")
+                onProgress(errorInfo(id, "Invalid magnet: ${ec.message()}"))
+                return@withContext
+            }
 
-            // Wait for the torrent handle to become available
+            val infoHash = Sha1Hash(p.getInfo_hashes().get_best())
+            infoHashMap[id] = infoHash
+
+            // Use the 3-param download method for magnet URIs
+            session.download(magnetUri, saveDir, torrent_flags_t())
+
+            // Wait for the handle to appear
             var handle: TorrentHandle? = null
-            val infoHash = extractInfoHash(magnetUri)
-
-            // Poll for the handle
-            for (i in 0..60) { // wait up to 60 seconds for metadata
+            for (i in 0..120) { // wait up to 2 minutes for metadata
                 delay(1000)
-                val torrents = session.torrents()
-                handle = torrents.find { th: TorrentHandle ->
-                    th.infoHash()?.toHex()?.lowercase() == infoHash?.lowercase()
-                }
-                if (handle != null) {
+                handle = session.find(infoHash)
+                if (handle != null && handle.isValid) {
                     activeTorrents[id] = handle
+                    Log.d(TAG, "Handle acquired for: $id")
                     break
                 }
             }
 
-            if (handle == null) {
+            if (handle == null || !handle.isValid) {
                 Log.e(TAG, "Failed to get torrent handle for: $id")
-                onProgress(TorrentDownloadInfo(
-                    id = id, name = "Failed: No peers found", totalSize = 0,
-                    downloadedSize = 0, downloadSpeed = 0, uploadSpeed = 0,
-                    seeds = 0, peers = 0, progress = 0f, savePath = "",
-                    state = TorrentDownloadState.ERROR, eta = 0
-                ))
+                onProgress(errorInfo(id, "Timeout: no peers found"))
                 return@withContext
             }
-
-            Log.d(TAG, "Handle acquired for: $id")
 
             // Monitor download progress
             monitorDownload(id, handle, onProgress, onComplete)
 
         } catch (e: Exception) {
             Log.e(TAG, "Error adding download: ${e.message}", e)
-            onProgress(TorrentDownloadInfo(
-                id = id, name = "Error: ${e.message}", totalSize = 0,
-                downloadedSize = 0, downloadSpeed = 0, uploadSpeed = 0,
-                seeds = 0, peers = 0, progress = 0f, savePath = "",
-                state = TorrentDownloadState.ERROR, eta = 0
-            ))
+            onProgress(errorInfo(id, "Error: ${e.message}"))
         }
     }
+
+    private fun errorInfo(id: String, message: String) = TorrentDownloadInfo(
+        id = id, name = message, totalSize = 0, downloadedSize = 0,
+        downloadSpeed = 0, uploadSpeed = 0, seeds = 0, peers = 0,
+        progress = 0f, savePath = "", state = TorrentDownloadState.ERROR, eta = 0
+    )
 
     /**
      * Monitor an active download and report progress.
@@ -240,9 +192,15 @@ class TorrentEngine @Inject constructor(
         var completed = false
 
         while (!completed) {
-            delay(1000) // Update every second
+            delay(1000)
 
             try {
+                if (!handle.isValid) {
+                    onProgress(errorInfo(id, "Torrent handle invalid"))
+                    completed = true
+                    continue
+                }
+
                 val status = handle.status()
                 val ti = handle.torrentFile()
 
@@ -255,7 +213,6 @@ class TorrentEngine @Inject constructor(
                 val peers = status.numPeers()
                 val progress = if (totalSize > 0) downloaded.toFloat() / totalSize else status.progress()
 
-                // Calculate ETA
                 val eta = if (dlSpeed > 0 && totalSize > downloaded) {
                     (totalSize - downloaded) / dlSpeed
                 } else 0L
@@ -264,7 +221,6 @@ class TorrentEngine @Inject constructor(
                     status.isFinished -> TorrentDownloadState.COMPLETED
                     status.isSeeding -> TorrentDownloadState.SEEDING
                     status.isPaused -> TorrentDownloadState.PAUSED
-                    !handle.isValid -> TorrentDownloadState.ERROR
                     totalSize == 0L -> TorrentDownloadState.FETCHING_METADATA
                     else -> TorrentDownloadState.DOWNLOADING
                 }
@@ -291,114 +247,83 @@ class TorrentEngine @Inject constructor(
                 if (state == TorrentDownloadState.COMPLETED || state == TorrentDownloadState.SEEDING) {
                     completed = true
 
-                    // Determine the primary file path
-                    val primaryFile = if (files.isNotEmpty()) {
-                        // Find the largest file (usually the main content)
-                        val savePath = handle.savePath()
-                        val largestFile = if (ti != null) {
-                            val fs = ti.files()
-                            var maxSize = 0L
-                            var maxIdx = 0
-                            for (i in 0 until fs.numFiles()) {
-                                if (fs.fileSize(i) > maxSize) {
-                                    maxSize = fs.fileSize(i)
-                                    maxIdx = i
-                                }
+                    // Find the largest file (main content)
+                    val primaryFile = if (ti != null && ti.files().numFiles() > 0) {
+                        val fs = ti.files()
+                        var maxSize = 0L
+                        var maxIdx = 0
+                        for (i in 0 until fs.numFiles()) {
+                            if (fs.fileSize(i) > maxSize) {
+                                maxSize = fs.fileSize(i)
+                                maxIdx = i
                             }
-                            fs.filePath(maxIdx)
-                        } else files.firstOrNull() ?: name
-                        File(savePath, largestFile).absolutePath
+                        }
+                        File(handle.savePath(), fs.filePath(maxIdx)).absolutePath
                     } else {
                         File(handle.savePath(), name).absolutePath
                     }
 
                     Log.d(TAG, "Download complete: $name → $primaryFile")
                     onComplete(primaryFile)
-                    downloadCallbacks.remove(id)
-                    completionCallbacks.remove(id)
+                    cleanup(id)
                 }
 
                 if (state == TorrentDownloadState.ERROR) {
                     completed = true
-                    downloadCallbacks.remove(id)
-                    completionCallbacks.remove(id)
+                    cleanup(id)
                 }
 
             } catch (e: Exception) {
                 Log.w(TAG, "Error monitoring download $id: ${e.message}")
-                // Don't break on transient errors, keep monitoring
             }
         }
     }
 
-    /**
-     * Pause a download.
-     */
-    fun pauseDownload(id: String) {
-        activeTorrents[id]?.pause()
-    }
-
-    /**
-     * Resume a download.
-     */
-    fun resumeDownload(id: String) {
-        activeTorrents[id]?.resume()
-    }
-
-    /**
-     * Cancel a download and remove files.
-     */
-    fun cancelDownload(id: String) {
-        val handle = activeTorrents.remove(id) ?: return
-        sessionManager?.remove(handle)
+    private fun cleanup(id: String) {
         downloadCallbacks.remove(id)
         completionCallbacks.remove(id)
     }
 
-    /**
-     * Handle libtorrent alerts.
-     */
+    fun pauseDownload(id: String) {
+        activeTorrents[id]?.pause()
+    }
+
+    fun resumeDownload(id: String) {
+        activeTorrents[id]?.resume()
+    }
+
+    fun cancelDownload(id: String) {
+        val handle = activeTorrents.remove(id) ?: return
+        sessionManager?.remove(handle)
+        infoHashMap.remove(id)
+        cleanup(id)
+    }
+
     private fun handleAlert(alert: Alert<*>) {
         when (alert.type()) {
             AlertType.TORRENT_FINISHED -> {
-                val a = alert as TorrentFinishedAlert
-                Log.d(TAG, "Alert: Torrent finished — ${a.torrentName()}")
+                Log.d(TAG, "Alert: Torrent finished")
             }
             AlertType.TORRENT_ERROR -> {
                 val a = alert as TorrentErrorAlert
-                Log.e(TAG, "Alert: Torrent error — ${a.torrentName()}: ${a.error()}")
+                Log.e(TAG, "Alert: Torrent error — ${a.error()}")
             }
             AlertType.METADATA_RECEIVED -> {
                 Log.d(TAG, "Alert: Metadata received")
             }
-            AlertType.PEER_CONNECT -> {
-                // Peer connected, normal operation
-            }
             AlertType.DHT_BOOTSTRAP -> {
                 Log.d(TAG, "Alert: DHT bootstrapped")
             }
-            else -> {
-                // Other alerts
-            }
+            else -> { }
         }
     }
 
-    /**
-     * Extract info hash from magnet URI.
-     */
-    private fun extractInfoHash(magnetUri: String): String? {
-        val regex = Regex("btih:([a-fA-F0-9]{40})", RegexOption.IGNORE_CASE)
-        return regex.find(magnetUri)?.groupValues?.get(1)
-    }
-
-    /**
-     * Stop the engine and release resources.
-     */
     fun stop() {
         try {
             activeTorrents.clear()
             downloadCallbacks.clear()
             completionCallbacks.clear()
+            infoHashMap.clear()
             sessionManager?.stop()
             sessionManager = null
             _isRunning.value = false
