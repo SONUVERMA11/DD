@@ -65,6 +65,9 @@ android {
             excludes += "/META-INF/INDEX.LIST"
             excludes += "/META-INF/io.netty.versions.properties"
         }
+        jniLibs {
+            useLegacyPackaging = true // Required for libtorrent4j native .so files
+        }
     }
 }
 
@@ -143,4 +146,11 @@ dependencies {
 
     // Biometric
     implementation(libs.biometric)
+
+    // Torrent Engine (libtorrent4j with native Android binaries)
+    implementation(libs.libtorrent4j)
+    implementation(libs.libtorrent4j.android.arm64)
+    implementation(libs.libtorrent4j.android.arm)
+    implementation(libs.libtorrent4j.android.x86)
+    implementation(libs.libtorrent4j.android.x86.x86.64)
 }

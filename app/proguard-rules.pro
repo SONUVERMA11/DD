@@ -37,3 +37,8 @@
 
 # Jsoup
 -keeppackagenames org.jsoup.nodes
+
+# libtorrent4j — keep native bindings
+-keep class org.libtorrent4j.** { *; }
+-keep class org.libtorrent4j.swig.** { *; }
+-dontwarn org.libtorrent4j.**
