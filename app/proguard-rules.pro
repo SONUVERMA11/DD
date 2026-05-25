@@ -41,4 +41,5 @@
 # libtorrent4j — keep native bindings
 -keep class org.libtorrent4j.** { *; }
 -keep class org.libtorrent4j.swig.** { *; }
+-keep class org.libtorrent4j.swig.libtorrent_jni { *; }
 -dontwarn org.libtorrent4j.**
