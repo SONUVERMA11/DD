@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="assets/banner.png" alt="DD Banner" width="100%">
+</p>
+
+<p align="center">
   <img src="website/assets/app-icon.png" width="120" height="120" alt="DD Logo" style="border-radius: 24px;" />
 </p>
 
