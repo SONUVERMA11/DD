@@ -316,3 +316,8 @@ This project is open source. See the repository for license details.
     <img src="https://img.shields.io/badge/Download-Latest%20APK-00E5FF?style=for-the-badge&logo=android&logoColor=white&labelColor=0A0E1A" alt="Download" />
   </a>
 </p>
+
+
+---
+Made with ❤️ by [Sonu Verma](https://github.com/SONUVERMA11)
+
